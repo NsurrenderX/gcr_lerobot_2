@@ -439,7 +439,7 @@ def train(cfg: TrainPipelineConfig):
         sampler=sampler,
         num_workers=8,
         collate_fn=extra_collate_fn,
-        pin_memory=False,
+        pin_memory=True,
     )
     
     # 混合精度scaler

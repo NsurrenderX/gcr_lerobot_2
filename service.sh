@@ -1,12 +1,13 @@
-python lerobot/scripts/xvla_service.py \
-    --policy.type="xvla" \
-    --policy.encoder_name="/data_16T/deepseek/xvla_comp/Florence-2-large" \
+python lerobot/scripts/halo_service.py \
+    --policy.type="qwen" \
     --dataset.repo_id="whatever" \
-    --dataset.processor=none \
-    --dataset.root="/data_16T/lerobot_openx/" \
-    --data_mix="cup_full_plus" \
-    --uni_res=true \
-    --uni_obs_tensor=true
+    --dataset.processor='/data_16T/deepseek/Qwen2.5-VL-7B-Instruct/' \
+    --dataset.parent_dir="/data_16T/lerobot_openx/" \
+    --data_mix="cup_plus_aug"
+    # --uni_res=true \
+    # --uni_obs_tensor=true
+    
+    # --policy.encoder_name="/data_16T/deepseek/xvla_comp/Florence-2-large" \
     
     # --dataset.root="/data_16T/lerobot_openx/" \
     # --data_mix="pizza"

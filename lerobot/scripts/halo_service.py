@@ -5,10 +5,12 @@ import json
 import time
 import base64
 import requests
+import math
 import transformers
 import numpy as np
 import copy
 
+from torch.nn import functional as F
 from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
@@ -302,6 +304,7 @@ def prepare_input(item, processor):
     vl_item = prepare_data(item, processor)
     
     item["observation.state"] = pad_vector(item["observation.state"], 32)
+    item["observation.state"][7] = 0 if item["observation.state"][7] < 0.06 else 1
     item["observation.state"] = (item["observation.state"] - item["mean"]) / (item["std"] + 1e-8)
     state = torch.zeros_like(item["observation.state"])
     state_prefix = torch.ones_like(item["observation.state"])
@@ -378,6 +381,12 @@ def predict():
         item["primary"].append(image_k4a_1)
     sample_image_array = np.ones((224, 224, 3), dtype=np.uint8)
     item["secondary"] = decode_b64_image(resp['images'][1])
+    sec_shape = item["secondary"].shape
+    if sec_shape[0] > sec_shape[1]:
+        # center crop
+        item["secondary"] = item["secondary"][sec_shape[0]//2 - sec_shape[1]//2:sec_shape[0]//2 + sec_shape[1]//2,:,:]
+    else:
+        item["secondary"] = item["secondary"][:,sec_shape[1]//2-sec_shape[0]//2:sec_shape[1]//2+sec_shape[0]//2,:]
     # item["secondary"] = item["secondary"][40:720,200:880,:]
     item["secondary"] = Image.fromarray(item["secondary"]).resize((224,224))
     item["secondary"].save("/home/v-wenhuitan/pi_0_open/media/obs/real_1.jpg")
@@ -402,17 +411,20 @@ def predict():
     input["action.std"] = action_std
     
     actions = halo.infer(input).tolist() # 1 * 50 *32
+    chunk = len(actions[0])
+    for i in range(chunk):
+        actions[0][i][6] = 1 / (1+ math.exp(-actions[0][i][6]))
     # actions = actions[0] # 50 * 32
-    actions = [row[:7] for row in actions[0]] # 50 * 7 eef pose
+    action_list = [row[:7] for row in actions[0]] # 50 * 7 eef pose
     # actions = [row[6:14] for row in actions[0]] # 50 * 7 joint
-    for i in range(8):
-        row = actions[i]
+    for i in range(10):
+        row = action_list[i]
         print(f" ".join(f"{num:4f}" for num in row))
         # print(actions[i])
     # print()
     
     response_dict = {
-        "act": actions
+        "act": action_list
     }
     return jsonify(response_dict)
 
@@ -519,7 +531,7 @@ def modelbench():
 @parser.wrap()
 def start_service(cfg: TrainPipelineConfig):
     
-    path_2_load = "/data_16T/deepseek/qwen_flow/161/step10000.pt"
+    path_2_load = "/data_16T/deepseek/halo/cup_pp/step6000.pt"
     cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     device = "cuda:1"
     
@@ -532,30 +544,27 @@ def start_service(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=seed,
         data_mix=cfg.data_mix,
-        vla2root_json="pizza.json",
+        vla2root_json="vla2root.json",
         # vla2root_json="vla2root_bak_single.json"
     )
-    action_mean = dataset.stats["action"]["mean"]
-    action_std = dataset.stats["action"]["std"]
+    ACT_IDX = [0,1,2,3,4,5]
+    STATE_IDX = [0,1,2,6,7,8,9]
+    GRIPPER_IDX = 6
+    action_mean = F.pad(dataset.stats["action"]["mean"][ACT_IDX], (0, 32 - dataset.stats["action"]["mean"][ACT_IDX].shape[0]))
+    action_std = F.pad(dataset.stats["action"]["std"][ACT_IDX], (0, 32 - dataset.stats["action"]["std"][ACT_IDX].shape[0]))
+    action_mean[GRIPPER_IDX] = 0.0
+    action_std[GRIPPER_IDX] = 1.0
+    
+    state_mean = F.pad(dataset.stats["observation.state"]["mean"][STATE_IDX], (0, 32 - dataset.stats["observation.state"]["mean"][STATE_IDX].shape[0]))
+    state_std = F.pad(dataset.stats["observation.state"]["std"][STATE_IDX], (0, 32 - dataset.stats["observation.state"]["std"][STATE_IDX].shape[0]))
+    state_mean[GRIPPER_IDX+1] = 0.0
+    state_std[GRIPPER_IDX+1] = 1.0
+    
     print("Action Meta: \n", action_mean, action_std)
     # action_mean[6] = 0.0
     # action_std[6] = 1.0
     
-    # print(action_mean)
-    # print(action_std)
-    
-    # dataset = MultiDatasetforDistTraining(
-    #     cfg=cfg, 
-    #     image_transforms=image_transforms,
-    #     seed=seed,
-    #     data_mix=cfg.data_mix,
-    #     # vla2root_json="pizza.json",
-    #     vla2root_json="vla2root_bak_single.json"
-    # )
-    
-    state_mean = dataset.stats["observation.state"]["mean"]
-    state_std = dataset.stats["observation.state"]["std"]
-    
+
     processor = dataset.processor
     
     policy = make_policy(

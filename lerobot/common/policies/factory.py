@@ -166,7 +166,7 @@ def make_policy(
     policy = policy_cls(**kwargs)
     print("training from scratch")
 
-    if weight_pt_path:
+    if weight_pt_path is not None and len(weight_pt_path) > 3:
         weights = torch.load(weight_pt_path, map_location="cpu")
         # 过滤掉包含 "gemma_expert" 的权重
         # unfit_weight_key = [
