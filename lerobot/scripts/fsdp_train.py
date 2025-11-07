@@ -213,18 +213,21 @@ def train(cfg: TrainPipelineConfig):
         timeout=timedelta(minutes=60),
         rank=world_rank,
     )
+    cfg.validate()
+    logger = init_logger(cfg, rank)
+    logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
+    
     
     # dist.init_process_group(backend="nccl")
     # rank = dist.get_rank()
     # world_size = dist.get_world_size()
     # local_rank = rank
+    # cfg.validate()
+    # logger = init_logger(cfg, rank)
     
     torch.cuda.set_device(local_rank)
     
     # 初始化配置
-    cfg.validate()
-    logger = init_logger(cfg, rank)
-    logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
     
     if rank == 0:
         logger.info(pformat(cfg.to_dict()))

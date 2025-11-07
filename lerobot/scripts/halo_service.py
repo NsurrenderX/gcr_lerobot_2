@@ -531,7 +531,7 @@ def modelbench():
 @parser.wrap()
 def start_service(cfg: TrainPipelineConfig):
     
-    path_2_load = "/data_16T/deepseek/halo/cup_pp/step6000.pt"
+    path_2_load = "/data_16T/deepseek/halo/cup_pp/step8000.pt"
     cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     device = "cuda:1"
     

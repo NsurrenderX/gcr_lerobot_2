@@ -163,10 +163,10 @@ torchrun \
     --policy.train_awa=$TRAIN_AWA \
     --policy.train_expert=$TRAIN_EXPERT \
     --policy.train_full_vlm=$TRAIN_FULL_VLM \
-    --policy.pretrained_path=$PRETRAINED_PATH \
+    --resume=true \
     --wandb.enable=true \
     --wandb.project="pi0first" \
     --job_name="$JOB_NAME" \
     --job_type="$JOB_TYPE" \
-    --log_dir="/mnt/wangxiaofa/logs" \
-    --resume=true
+    --log_dir="/mnt/wangxiaofa/logs" 
+    # --policy.pretrained_path=$PRETRAINED_PATH

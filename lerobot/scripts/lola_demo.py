@@ -269,6 +269,8 @@ def main(cfg: TrainPipelineConfig):
     actions = lola.infer(input).tolist()
     
     actions = np.array([row[:14] for row in actions[0]])
+    GRIPPER_IDX = [6, 13]
+    actions[:, GRIPPER_IDX] = 1 / (1 + np.exp(-actions[:, GRIPPER_IDX]))
     
     print(actions.shape)
     response_dict = {
