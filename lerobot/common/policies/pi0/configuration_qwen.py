@@ -20,9 +20,9 @@ class QwenConfig(PreTrainedConfig):
     chunk_size: int = 50
     n_action_steps: int = 50
     
-    gripper_scale: float = 0.1
+    gripper_scale: float = 1.0
     pos_scale: float = 5.0
-    rot_scale: float = 1.0
+    rot_scale: float = 1.5
     
     max_frame: int = 3
     
