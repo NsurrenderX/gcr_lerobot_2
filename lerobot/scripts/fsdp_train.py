@@ -97,6 +97,23 @@ def init_logger(cfg, rank):
         logger.addHandler(file_handler)
     
     return logger
+def check_batch(batch):
+    print("="*50+" BATCH INFO "+ "="*50)
+    print(f"BATCH INFO ON DEVICE: {get_rank()}")
+    for k, v in batch.items():
+        if isinstance(v, torch.Tensor):
+            print(f"{k}: {v.shape}, {v.dtype}, {v.device}")
+        else:
+            print(f"{k}: {v}")
+            
+def check_loss(loss_dict):
+    print("="*50+" LOSS INFO "+ "="*50)
+    print(f"LOSS INFO ON DEVICE: {get_rank()}")
+    for k, v in loss_dict.items():
+        if isinstance(v, torch.Tensor):
+            print(f"{k}: {v.item()}, {v.dtype}, {v.device}")
+        else:
+            print(f"{k}: {v}")
 
 def get_rank():
     return dist.get_rank() if dist.is_initialized() else 0
@@ -167,6 +184,7 @@ def train_step(model, batch, scaler, cfg, sync_flag):
     with torch.amp.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):
         
         if sync_flag:
+            # check_batch(batch)
             loss, output_dict = model(batch)
             
             loss = loss / cfg.gradient_accumulation_steps

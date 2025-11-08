@@ -168,5 +168,5 @@ torchrun \
     --wandb.project="pi0first" \
     --job_name="$JOB_NAME" \
     --job_type="$JOB_TYPE" \
-    --log_dir="/mnt/wangxiaofa/logs" 
-    # --policy.pretrained_path=$PRETRAINED_PATH
+    --log_dir="/mnt/wangxiaofa/logs" \
+    --policy.pretrained_path=$PRETRAINED_PATH
