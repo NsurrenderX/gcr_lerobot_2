@@ -275,5 +275,14 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
      "aloha_bb": [
          ("aloha_bb", 1.0),
      ],
+     "cup_pp_10":[
+         ("cup_pp_10", 1.0),
+     ],
+     "cup_pp_20":[
+         ("cup_pp_20", 1.0),
+     ],
+     "cup_pp_50":[
+         ("cup_pp_50", 1.0),
+     ]
 }
 # fmt: on
