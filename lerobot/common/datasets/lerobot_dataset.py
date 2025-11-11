@@ -51,8 +51,7 @@ from lerobot.common.datasets.oxe_configs import OXE_DATASET_CONFIGS
 from lerobot.common.datasets.mixtures import OXE_NAMED_MIXTURES
 from lerobot.common.datasets.utils import cycle
 # from lerobot.common.datasets.factory import resolve_delta_timestamps
-# from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats, aggregate_multi_stats, aggregate_same_stats
-from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats, aggregate_multi_stats, aggregate_same_stats
 from lerobot.common.datasets.transforms import ImageTransforms
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.common.datasets.rotation_convert import (
@@ -94,7 +93,6 @@ from lerobot.common.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    write_stats
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
@@ -359,7 +357,6 @@ class LeRobotDatasetMetadata:
         self.episodes_stats[episode_index] = episode_stats
         self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats else episode_stats
         write_episode_stats(episode_index, episode_stats, self.root)
-        write_stats(self.stats, self.root)
 
     def update_video_info(self) -> None:
         """

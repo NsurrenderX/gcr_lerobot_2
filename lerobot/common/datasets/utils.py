@@ -142,7 +142,6 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset
 
 
-
 def load_json(fpath: Path) -> Any:
     with open(fpath) as f:
         return json.load(f)
@@ -170,15 +169,6 @@ def append_jsonlines(data: dict, fpath: Path) -> None:
     with jsonlines.open(fpath, "a") as writer:
         writer.write(data)
 
-def write_stats(stats: dict, local_dir: Path) -> None:
-    """Serialize and write dataset statistics to their standard file path.
-
-    Args:
-        stats (dict): The statistics dictionary (can contain tensors/numpy arrays).
-        local_dir (Path): The root directory of the dataset.
-    """
-    serialized_stats = serialize_dict(stats)
-    write_json(serialized_stats, local_dir / STATS_PATH)
 
 def write_info(info: dict, local_dir: Path):
     write_json(info, local_dir / INFO_PATH)

@@ -31,9 +31,6 @@ DATA_DOMAIN_ID = {
     "cup_7_plus": 21,
     "cup_100_plus": 22,
     "aloha_bb": 23,
-    "cup_pp_10": 24,
-    "cup_pp_20": 25,
-    "cup_pp_50": 26,
         
     # pretraining
     "robomind-franka": 11,
