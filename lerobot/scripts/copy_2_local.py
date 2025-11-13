@@ -105,3 +105,8 @@ if __name__ == "__main__":
     directory_A = "/mnt/wangxiaofa/robot_dataset/lerobot-format/cup_hz_4_plus_1103/"
     directory_B = "/scratch/amlt_code/gcr_lerobot_2/robot_dataset/lerobot-format/cup_hz_4_plus_1103/"
     recursive_copy_with_progress(directory_A, directory_B, max_workers=MAX_WORKERS)
+    
+    directory_A = "/mnt/wangxiaofa/robot_dataset/lerobot-format/aloha-busybox_lerobot_v2_1_extended_combined_filter/"
+    directory_B = "/scratch/amlt_code/gcr_lerobot_2/robot_dataset/lerobot-format/aloha-busybox_lerobot_v2_1_extended_combined_filter/"
+    
+    recursive_copy_with_progress(directory_A, directory_B, max_workers=MAX_WORKERS)
