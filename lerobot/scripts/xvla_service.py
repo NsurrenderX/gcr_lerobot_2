@@ -218,7 +218,8 @@ def predict():
 def start_service(cfg: TrainPipelineConfig):
     
     # path_2_load = "/data_16T/deepseek/pi0pizza/mp_rank_00_model_states.pt"
-    path_2_load = "/data_16T/deepseek/xvla_finetune/cup_full_plus_1028_scra/step20000.pt"
+    path_2_load = "/data_16T/deepseek/xvla_finetune/cupp_1112_fs50/step15000.pt"
+    device = "cuda:1"
     
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
     seed = cfg.seed
@@ -302,7 +303,6 @@ def start_service(cfg: TrainPipelineConfig):
         
     xvla = policy
     xvla.eval()
-    device = "cuda:0"
 
     xvla.to(device=device)
     
@@ -313,4 +313,4 @@ if __name__ == '__main__':
     device, xvla, state_mean, state_std, action_mean, action_std = start_service()
     dim_act = 20
     # image_pool = {}
-    app.run(host='0.0.0.0', port=7777)
+    app.run(host='0.0.0.0', port=7778)
