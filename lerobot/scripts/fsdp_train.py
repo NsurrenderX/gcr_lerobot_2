@@ -38,10 +38,19 @@ from torch.distributed.fsdp import (
     MixedPrecision,
     ShardingStrategy,
 )
+from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
     size_based_auto_wrap_policy,
     always_wrap_policy
+)
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+    get_optimizer_state_dict,
 )
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
@@ -117,6 +126,55 @@ def check_loss(loss_dict):
 
 def get_rank():
     return dist.get_rank() if dist.is_initialized() else 0
+
+def load_hybrid_parallel_checkpoint(model, optim, load_dir):
+    """
+    使用 DCP 加载 FSDP + TP 混合并行模型的检查点。
+    """
+    
+    # 1. 定义要加载的状态 (空壳)
+    state_dict = {
+        "model": model.state_dict(),
+        "optimizer": optim.state_dict(),
+    }
+
+    # 2. 执行分布式加载
+    # load_dir 必须是 dcp.save() 保存的那个目录
+    dcp.load(
+        state_dict=state_dict,
+        checkpoint_id=load_dir,
+    )
+
+    # 3. 将加载的状态应用到模型和优化器
+    model.load_state_dict(state_dict["model"])
+    optim.load_state_dict(state_dict["optimizer"])
+    
+    # 4. 恢复 step (可选)
+    # DCP 目前主要用于模型/优化器状态，元数据需要单独处理
+    # 你可能需要单独保存和加载 step.
+    
+    dist.barrier()
+    if get_rank() == 0:
+        logging.info(f"Distributed checkpoint loaded from: {load_dir}")
+
+def save_hybrid_parallel_checkpoint(model, optim, output_dir, step):
+    """
+    使用 DCP 保存 FSDP + TP 混合并行模型的检查点。
+    注意：这会保存为一个目录，而不是单个文件。
+    """
+    model_state = get_model_state_dict(model)
+    optim_state = get_optimizer_state_dict(model, optim)
+    state_dict = {
+        "model": model_state,
+        "optimizer": optim_state,
+        "step": step,
+    }
+    # 3. DCP 保存到的是一个目录
+    ckpt_dir = os.path.join(output_dir, f"step_{step}")
+    dcp.save(state_dict, checkpoint_id=ckpt_dir)
+    dist.barrier()
+    if get_rank() == 0:
+        logging.info(f"Distributed checkpoint (DCP) saved to directory: {ckpt_dir}")
 
 def save_fsdp_checkpoint(model, optim, output_dir, step):
     # 使用 StateDictType.FULL_STATE_DICT 替代 FSDP.FULL_STATE_DICT
@@ -231,6 +289,11 @@ def train(cfg: TrainPipelineConfig):
         timeout=timedelta(minutes=60),
         rank=world_rank,
     )
+    tp_size = 2
+    dp_size = world_size // tp_size
+    device_mesh = init_device_mesh("cuda", (dp_size, tp_size), mesh_dim_names=("dp", "tp"))
+    tp_mesh = device_mesh["tp"]
+    dp_mesh = device_mesh["dp"]
     cfg.validate()
     logger = init_logger(cfg, rank)
     logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
@@ -269,12 +332,42 @@ def train(cfg: TrainPipelineConfig):
     if cfg.resume:
         logger.info("Resume is set, will model from checkpoint...")
         os.makedirs(cfg.output_dir, exist_ok=True)
+        ckpt_dirs = sorted(glob.glob(os.path.join(cfg.output_dir, "step_*")))
         pts = sorted(glob.glob(os.path.join(cfg.output_dir, "*.pt")))
-        logger.info(f"Found {len(pts)} checkpoints, names are {pts}")
-        if pts:
+        from_dir = False
+        from_pt = False
+        if ckpt_dirs:
+            steps = []
+            valid_dirs = {} # 映射 step 编号到目录路径
+            for dir_path in ckpt_dirs:
+                if not os.path.isdir(dir_path):
+                    continue
+                dir_name = os.path.basename(dir_path)
+                if dir_name.startswith("step_"):
+                    try:
+                        step_num = int(dir_name.split('_')[-1])
+                        steps.append(step_num)
+                        valid_dirs[step_num] = dir_path
+                    except ValueError:
+                        logger.warning(f"Could not parse step number from directory: {dir_path}")
+            logger.info(f"Found {len(steps)} checkpoint directories, names are {steps}")
+            if steps:
+                latest_step_num = sorted(steps)[-1]
+                start_step = latest_step_num + 1 # 新的起始 step
+                resume_from_dir = valid_dirs[latest_step_num]
+                logger.info(f"Identified latest checkpoint at step {latest_step_num}.")
+                from_dir = True
+        elif pts:
+            logger.info(f"Found {len(pts)} checkpoints, names are {pts}")
             steps = [int(os.path.basename(pt).split(".")[0].split("step")[1]) for pt in pts]
             step = sorted(steps)[-1] + 1
+            logger.info(f"Identified latest checkpoint at step {step}.")
+            from_pt = True
+        else:
+            logger.warning("No checkpoint found, will start from scratch.")
+            cfg.resume = False
             # seed += (step-1)
+            
             
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
     dataset = MultiDatasetforDistTraining(
@@ -304,6 +397,82 @@ def train(cfg: TrainPipelineConfig):
         weight_pt_path=cfg.policy.pretrained_path
     )
     
+    layer_plan = {
+        # === 1. Vision Transformer (qwen25vl.visual) ===
+        # Qwen2_5_VLVisionBlock (Attention)
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.attn.qkv": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.attn.proj": RowwiseParallel(),
+        # Qwen2_5_VLVisionBlock (MLP)
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.down_proj": RowwiseParallel(),
+        
+        # VLPatchMerger (MLP)
+        "paligemma_with_expert.qwen25vl.visual.merger.mlp.0": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.merger.mlp.2": RowwiseParallel(),
+
+        # === 2. 主 LLM (qwen25vl.model) ===
+        # 词表和LM Head (Vocab Parallelism)
+        "paligemma_with_expert.qwen25vl.model.embed_tokens": RowwiseParallel(),
+        "paligemma_with_expert.qwen25vl.lm_head": ColwiseParallel(),
+        
+        # Qwen2_5_VLDecoderLayer (Attention)
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2_5_VLDecoderLayer (MLP)
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 3. Qwen Expert (qwen_expert) ===
+        # Qwen2DecoderLayer (Attention)
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (MLP)
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 4. KV Representation (kv_repre) ===
+        "paligemma_with_expert.kv_repre.*.linear_1": ColwiseParallel(),
+        "paligemma_with_expert.kv_repre.*.compress_to_tgtdim": RowwiseParallel(),
+        "paligemma_with_expert.kv_repre.*.linear_2": ColwiseParallel(),
+
+        # === 5. AWA Model (awa_model) ===
+        # 词表 (Vocab Parallelism)
+        "paligemma_with_expert.awa_model.model.embed_tokens": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (Attention)
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (MLP)
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 6. 顶层 Projections (在 QwenFlowMatching 中) ===
+        "state_proj": ColwiseParallel(),
+        "action_in_proj": ColwiseParallel(),
+        "action_out_proj": RowwiseParallel(), # 接收 sharded 'action_in_proj' 的结果
+        "action_time_mlp_in": ColwiseParallel(),
+        "action_time_mlp_out": RowwiseParallel(),
+    }
+    
+    policy = parallelize_module(policy, tp_mesh, layer_plan)
+    
+    logger.info("Model Structure:")
+    logger.info(policy)
+    logger.info("="*60+"\n")
+    
     # 统计模型参数量
     if rank == 0:
         logger.info(f"Model parameters: {sum(p.numel() for p in policy.parameters())}")
@@ -314,24 +483,20 @@ def train(cfg: TrainPipelineConfig):
         logger.info(f"Action Expert parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.qwen_expert.parameters())}")
     
     # 训练状态初始化
-    if cfg.resume:
-        if pts:
-            cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
-            logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
-            model_state_dict = torch.load(cfg.resume, map_location="cpu")
-            key_to_remove = []
-            for k, v in model_state_dict.items():
-                if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
-                    key_to_remove.append(k)
-            for k in key_to_remove:
-                del model_state_dict[k]
-            
-            policy.load_state_dict(model_state_dict, strict=True)
-            del model_state_dict
-            del key_to_remove
-        else:
-            cfg.resume = False
-            logger.info("No checkpoint found, starting from scratch.")
+    if cfg.resume and from_pt:
+        cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
+        logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
+        model_state_dict = torch.load(cfg.resume, map_location="cpu")
+        key_to_remove = []
+        for k, v in model_state_dict.items():
+            if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
+                key_to_remove.append(k)
+        for k in key_to_remove:
+            del model_state_dict[k]
+        
+        policy.load_state_dict(model_state_dict, strict=True)
+        del model_state_dict
+        del key_to_remove
             
     # 设置模型全部参数为BF16
     logger.info("Setting model parameters to BF16...")
@@ -507,6 +672,12 @@ def train(cfg: TrainPipelineConfig):
     
     if cfg.resume:
         logger.info("Setting up learning rate scheduler...")
+        if from_dir:
+            dist.barrier()
+            logger.info(f"Attempting to load checkpoint from: {resume_from_dir}...")
+            load_hybrid_parallel_checkpoint(model, optimizer, resume_from_dir)
+            dist.barrier()
+            logger.info(f"Rank {dist.get_rank()}: Successfully resumed from step {latest_step_num}. Training will start at step {start_step}.")
         # for _ in range(int((step-1)/cfg.gradient_accumulation_steps)):
         for _ in range(int((step-1)/cfg.gradient_accumulation_steps)):
             lr_scheduler.step()
@@ -656,13 +827,22 @@ def train(cfg: TrainPipelineConfig):
         
         # 保存检查点
         if step % cfg.save_freq == 0:
-            save_fsdp_checkpoint(model, optimizer, cfg.output_dir, step)
+            if cfg.resume:
+                if from_pt:
+                    save_fsdp_checkpoint(model, optimizer, cfg.output_dir, step)
+                else:
+                    save_hybrid_parallel_checkpoint(model, optimizer, cfg.output_dir, step)
+            else:
+                save_hybrid_parallel_checkpoint(model, optimizer, cfg.output_dir, step)
+            
+            # save_fsdp_checkpoint(model, optimizer, cfg.output_dir, step)
         
         step += 1
     
     # 最终保存
     if rank == 0:
-        save_fsdp_checkpoint(model, optimizer, cfg.output_dir, "final")
+        save_hybrid_parallel_checkpoint(model, optimizer, cfg.output_dir, step=-1)
+        # save_fsdp_checkpoint(model, optimizer, cfg.output_dir, "final")
         logger.info("Training completed successfully")
 
 if __name__ == "__main__":

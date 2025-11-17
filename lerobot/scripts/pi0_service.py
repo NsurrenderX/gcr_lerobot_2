@@ -8,6 +8,7 @@ import requests
 import transformers
 import numpy as np
 
+from torch.nn import functional as F
 from torchvision import transforms
 from PIL import Image
 from flask import Flask, jsonify, request
@@ -98,10 +99,10 @@ def predict():
     global device, processor, pi0, state_mean, state_std, action_mean, action_std
     
     resp = request.get_json()
-    fix_state = np.zeros((8))
+    # fix_state = np.zeros((8))
     item = {
-        # "observation.state": torch.tensor(resp["state"]),
-        "observation.state": torch.tensor(fix_state),
+        "observation.state": torch.tensor(resp["state"]),
+        # "observation.state": torch.tensor(fix_state),
         "task": [resp["task"]],
         "exp_id": resp["exp_id"]
     }
@@ -175,7 +176,7 @@ def predict():
 def start_service(cfg: TrainPipelineConfig):
     
     # path_2_load = "/data_16T/deepseek/pi0pizza/mp_rank_00_model_states.pt"
-    path_2_load = "/data_16T/deepseek/pi0pizza/step30k_plus.pt"
+    path_2_load = "/data_16T/deepseek/lzl/service/weight/cup/pi0/fs_50/step18000/mp_rank_00_model_states.pt"
     
     cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     
@@ -205,24 +206,20 @@ def start_service(cfg: TrainPipelineConfig):
             print(k, len(v), v[0])
         # print(k, v.shape)
     print("-"*40+"\n")
-    action_mean = dataset.stats["action"]["mean"][:14]
-    dataset.stats["action"]["mean"] = dataset.stats["action"]["mean"][:14]
-    action_std = dataset.stats["action"]["std"][:14]
-    dataset.stats["action"]["std"] = dataset.stats["action"]["std"][:14]
-    print("Action: ", action_mean, action_std)
-    # print(action_mean, action_std)
-    # action_mean[6] = 0.0
-    # action_std[6] = 1.0
+    ACT_IDX = [0,1,2,3,4,5]
+    STATE_IDX = [0,1,2,6,7,8,9]
+    GRIPPER_IDX = 6
+    action_mean = F.pad(torch.from_numpy(dataset.stats["action"]["mean"][ACT_IDX]), (0, 32 - dataset.stats["action"]["mean"][ACT_IDX].shape[0]))
+    action_std = F.pad(torch.from_numpy(dataset.stats["action"]["std"][ACT_IDX]), (0, 32 - dataset.stats["action"]["std"][ACT_IDX].shape[0]))
+    action_mean[GRIPPER_IDX] = 0.0
+    action_std[GRIPPER_IDX] = 1.0
     
-    state_mean = dataset.stats["observation.state"]["mean"][:15]
-    dataset.stats["observation.state"]["mean"] = dataset.stats["observation.state"]["mean"][:15]
-    state_std = dataset.stats["observation.state"]["std"][:15]
-    dataset.stats["observation.state"]["std"] = dataset.stats["observation.state"]["std"][:15]
-    print("State: ", state_mean, state_std)
-    # processor = dataset.processor
-    dataset.meta.stats['observation.state']['mean'] = np.zeros_like(dataset.meta.stats['observation.state']['mean'])
-    dataset.meta.stats['observation.state']['std'] = np.ones_like(dataset.meta.stats['observation.state']['std'])
-    # print("meta stats: ", dataset.meta.stats)
+    state_mean = F.pad(torch.from_numpy(dataset.stats["observation.state"]["mean"][STATE_IDX]), (0, 32 - dataset.stats["observation.state"]["mean"][STATE_IDX].shape[0]))
+    state_std = F.pad(torch.from_numpy(dataset.stats["observation.state"]["std"][STATE_IDX]), (0, 32 - dataset.stats["observation.state"]["std"][STATE_IDX].shape[0]))
+    state_mean[GRIPPER_IDX+1] = 0.0
+    state_std[GRIPPER_IDX+1] = 1.0
+    
+    print("Action Meta: \n", action_mean, action_std)
     
     policy = make_policy(
         cfg=cfg.policy,

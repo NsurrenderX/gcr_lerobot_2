@@ -169,14 +169,14 @@ def prepare_input(item, processor, device):
     
     item["observation.state"] = pad_vector(item["observation.state"], 32)
     item["observation.state"] = (item["observation.state"] - item["mean"]) / (item["std"] + 1e-8)
-    state = torch.zeros_like(item["observation.state"])
-    state_prefix = torch.ones_like(item["observation.state"])
-    state_device = item["observation.state"].device
-    state_dtype = item["observation.state"].dtype
+    # state = torch.zeros_like(item["observation.state"])
+    # state_prefix = torch.ones_like(item["observation.state"])
+    # state_device = item["observation.state"].device
+    # state_dtype = item["observation.state"].dtype
 
-    state[:8] = state_prefix[:8]
-    state = state.to(device = state_device, dtype = state_dtype)
-    item["observation.state"] = state
+    # state[:8] = state_prefix[:8]
+    # state = state.to(device = state_device, dtype = state_dtype)
+    # item["observation.state"] = state
     
     data_dict = {
         "observation.state": item["observation.state"].unsqueeze(0),
