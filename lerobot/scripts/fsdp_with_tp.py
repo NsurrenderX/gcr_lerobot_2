@@ -45,7 +45,7 @@ from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
     size_based_auto_wrap_policy,
-    always_wrap_policy,
+    always_wrap_policy
 )
 import torch.distributed.checkpoint as dcp
 from torch.distributed.checkpoint.state_dict import (
@@ -275,37 +275,37 @@ def train_step(model, batch, scaler, cfg, sync_flag):
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     # 初始化分布式环境
-    # world_size = int(os.environ["WORLD_SIZE"])
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # world_rank = int(os.environ["RANK"])
-    # node_rank = int(os.environ["NODE_RANK"])
-    # master_ip = os.environ["MASTER_ADDR"]
-    # master_port = os.environ["MASTER_PORT"]
-    # master_uri = "tcp://%s:%s" % (master_ip, master_port)
-    # rank = world_rank
-    # dist.init_process_group(
-    #     backend="nccl",
-    #     init_method=master_uri,
-    #     world_size=world_size,
-    #     timeout=timedelta(minutes=60),
-    #     rank=world_rank,
-    # )
-    # # tp_size = 2
-    # # dp_size = world_size // tp_size
-    # # device_mesh = init_device_mesh("cuda", (dp_size, tp_size), mesh_dim_names=("dp", "tp"))
-    # # tp_mesh = device_mesh["tp"]
-    # # dp_mesh = device_mesh["dp"]
-    # cfg.validate()
-    # logger = init_logger(cfg, rank)
-    # logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
-    
-    
-    dist.init_process_group(backend="nccl")
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    local_rank = rank
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_rank = int(os.environ["RANK"])
+    node_rank = int(os.environ["NODE_RANK"])
+    master_ip = os.environ["MASTER_ADDR"]
+    master_port = os.environ["MASTER_PORT"]
+    master_uri = "tcp://%s:%s" % (master_ip, master_port)
+    rank = world_rank
+    dist.init_process_group(
+        backend="nccl",
+        init_method=master_uri,
+        world_size=world_size,
+        timeout=timedelta(minutes=60),
+        rank=world_rank,
+    )
+    tp_size = 2
+    dp_size = world_size // tp_size
+    device_mesh = init_device_mesh("cuda", (dp_size, tp_size), mesh_dim_names=("dp", "tp"))
+    tp_mesh = device_mesh["tp"]
+    dp_mesh = device_mesh["dp"]
     cfg.validate()
     logger = init_logger(cfg, rank)
+    logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
+    
+    
+    # dist.init_process_group(backend="nccl")
+    # rank = dist.get_rank()
+    # world_size = dist.get_world_size()
+    # local_rank = rank
+    # cfg.validate()
+    # logger = init_logger(cfg, rank)
     
     torch.cuda.set_device(local_rank)
     
@@ -398,6 +398,82 @@ def train(cfg: TrainPipelineConfig):
         weight_pt_path=cfg.policy.pretrained_path
     )
     
+    layer_plan = {
+        # === 1. Vision Transformer (qwen25vl.visual) ===
+        # Qwen2_5_VLVisionBlock (Attention)
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.attn.qkv": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.attn.proj": RowwiseParallel(),
+        # Qwen2_5_VLVisionBlock (MLP)
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.blocks.*.mlp.down_proj": RowwiseParallel(),
+        
+        # VLPatchMerger (MLP)
+        "paligemma_with_expert.qwen25vl.visual.merger.mlp.0": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.visual.merger.mlp.2": RowwiseParallel(),
+
+        # === 2. 主 LLM (qwen25vl.model) ===
+        # 词表和LM Head (Vocab Parallelism)
+        "paligemma_with_expert.qwen25vl.model.embed_tokens": RowwiseParallel(),
+        "paligemma_with_expert.qwen25vl.lm_head": ColwiseParallel(),
+        
+        # Qwen2_5_VLDecoderLayer (Attention)
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2_5_VLDecoderLayer (MLP)
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen25vl.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 3. Qwen Expert (qwen_expert) ===
+        # Qwen2DecoderLayer (Attention)
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (MLP)
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.qwen_expert.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 4. KV Representation (kv_repre) ===
+        "paligemma_with_expert.kv_repre.*.linear_1": ColwiseParallel(),
+        "paligemma_with_expert.kv_repre.*.compress_to_tgtdim": RowwiseParallel(),
+        "paligemma_with_expert.kv_repre.*.linear_2": ColwiseParallel(),
+
+        # === 5. AWA Model (awa_model) ===
+        # 词表 (Vocab Parallelism)
+        "paligemma_with_expert.awa_model.model.embed_tokens": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (Attention)
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.q_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.k_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.v_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.self_attn.o_proj": RowwiseParallel(),
+        
+        # Qwen2DecoderLayer (MLP)
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.gate_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.up_proj": ColwiseParallel(),
+        "paligemma_with_expert.awa_model.model.layers.*.mlp.down_proj": RowwiseParallel(),
+
+        # === 6. 顶层 Projections (在 QwenFlowMatching 中) ===
+        "state_proj": ColwiseParallel(),
+        "action_in_proj": ColwiseParallel(),
+        "action_out_proj": RowwiseParallel(), # 接收 sharded 'action_in_proj' 的结果
+        "action_time_mlp_in": ColwiseParallel(),
+        "action_time_mlp_out": RowwiseParallel(),
+    }
+    
+    policy = parallelize_module(policy, tp_mesh, layer_plan)
+    
+    logger.info("Model Structure:")
+    logger.info(policy)
+    logger.info("="*60+"\n")
+    
     # 统计模型参数量
     if rank == 0:
         logger.info(f"Model parameters: {sum(p.numel() for p in policy.parameters())}")
@@ -452,33 +528,13 @@ def train(cfg: TrainPipelineConfig):
         always_wrap_policy,
     )
     
-    transformer_block_classes = {
-        Qwen2_5_VLVisionBlock,
-        Qwen2_5_VLDecoderLayer,
-        Qwen2DecoderLayer,
-    }
-    transformer_based_warp_policy = functools.partial(
-        transformer_auto_wrap_policy,
-        transformer_layer_cls=transformer_block_classes,
-    )
-    
     mixed_precision = MixedPrecision(
         param_dtype=torch.bfloat16,
         # reduce_dtype=torch.float32,
         reduce_dtype=torch.bfloat16,
         buffer_dtype=torch.bfloat16,
-        keep_low_precision_grads=True,
-        _module_classes_to_ignore=[Qwen2RMSNorm]
+        keep_low_precision_grads=True
     )
-    
-    ignored_modules = []
-    for name, param in policy.named_parameters():
-        if param.data.dtype == torch.float32:
-            logger.info(f"Find float32 param: {name}, converting to BF16")
-            param.data = param.data.to(dtype=torch.bfloat16)
-            
-            # param_module_class = param.__class__
-            # ignored_modules.append(param_module_class) if param_module_class not in ignored_modules else None
     
     # mixed_precision = MixedPrecision(
     #     param_dtype=torch.float16,
@@ -491,8 +547,7 @@ def train(cfg: TrainPipelineConfig):
     
     # mixed_precision = None
     
-    # sharding_strategy = ShardingStrategy.HYBRID_SHARD
-    sharding_strategy = ShardingStrategy._HYBRID_SHARD_ZERO2
+    sharding_strategy = ShardingStrategy.HYBRID_SHARD
     # sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
     # sharding_strategy = ShardingStrategy.FULL_SHARD
     
@@ -506,13 +561,14 @@ def train(cfg: TrainPipelineConfig):
     #     device_id=local_rank,
     #     use_orig_params=True
     # )
-    # for name, m in policy.named_modules():
-    #     if 'norm' in name:
-    #         ignored_modules.append(m)
-    #     if 'mask' in name:
-    #         ignored_modules.append(m)
-    # for m in ignored_modules:
-    #     m.to(local_rank)
+    ignored_modules = []
+    for name, m in policy.named_modules():
+        if 'norm' in name:
+            ignored_modules.append(m)
+        if 'mask' in name:
+            ignored_modules.append(m)
+    for m in ignored_modules:
+        m.to(local_rank)
     model = FSDP(
         policy,
         auto_wrap_policy=auto_wrap_policy,
@@ -525,7 +581,7 @@ def train(cfg: TrainPipelineConfig):
         use_orig_params=True
     )
     
-    # model =torch.compile(model)
+    model =torch.compile(model)
     
     
     # 优化器和学习率调度器

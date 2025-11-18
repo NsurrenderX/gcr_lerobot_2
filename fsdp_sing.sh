@@ -150,7 +150,7 @@ torchrun \
     --save_freq=$SAVE_FREQ \
     --gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
     --data_mix=$DATA_MIX \
-    --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
+    --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-3B-Instruct/" \
     --dataset.parent_dir="/scratch/amlt_code/gcr_lerobot_2/robot_dataset/lerobot-format/" \
     --policy.scheduler_warmup_steps=$SCHEDULER_WARMUP_STEPS \
     --policy.scheduler_decay_steps=$SCHEDULER_DECAY_STEPS \
