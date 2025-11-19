@@ -80,23 +80,28 @@ def train(cfg: TrainPipelineConfig):
     
     cfg.validate()
     
-    world_size = int(os.environ["WORLD_SIZE"], 1)
-    local_rank = int(os.environ["LOCAL_RANK"], 0)
-    world_rank = int(os.environ["RANK"], 0)
-    rank = world_rank
+    # world_size = int(os.environ["WORLD_SIZE"], 1)
+    # local_rank = int(os.environ["LOCAL_RANK"], 0)
+    # world_rank = int(os.environ["RANK"], 0)
+    # rank = world_rank
     
     
     with open(cfg.deepspeed, "r") as f:
         ds_cfg = json.load(f)
+    ds_cfg['gradient_accumulation_steps'] = cfg.gradient_accumulation_steps
     gradient_accumulation_steps = ds_cfg['gradient_accumulation_steps']
+    ds_cfg['train_micro_batch_size_per_gpu'] = cfg.batch_size
+    ds_cfg['optimizer']['params']['lr'] = cfg.policy.optimizer_lr
+    ds_cfg['optimizer']['params']['betas'] = cfg.policy.optimizer_betas
+    ds_cfg['optimizer']['params']['weight_decay'] = cfg.policy.optimizer_weight_decay
     
     deepspeed.init_distributed()
-    # if dist.is_initialized():
-    #     rank = dist.get_rank()
-    #     world_size = dist.get_world_size()
-    # else:
-    #     rank = 0
-    #     world_size = 1
+    if dist.is_initialized():
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+    else:
+        rank = 0
+        world_size = 1
         
     logger = init_logger(cfg, rank)
     
@@ -191,7 +196,7 @@ def train(cfg: TrainPipelineConfig):
     
     model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
         model=policy,
-        config=cfg.deepspeed,
+        config=ds_cfg,
         optimizer=None,
         lr_scheduler=scheduler_callable,
     )
