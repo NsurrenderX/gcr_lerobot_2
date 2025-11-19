@@ -315,7 +315,7 @@ def train(cfg: TrainPipelineConfig):
         
         if cfg.save_checkpoint and is_saving_step:
             
-            logger.info(f"Checkpoint policy after step {step}")
+            logger.info(f"Checkpoint policy after step {step_idx}")
             os.makedirs(cfg.output_dir, exist_ok=True)
             global_step = step_idx // gradient_accumulation_steps
             client_state = {
