@@ -21,6 +21,8 @@ from torch.optim.lr_scheduler import LRScheduler
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.configs.train import TrainPipelineConfig
 
+def scheduler_simple_warpper(optimizer: Optimizer, cfg: TrainPipelineConfig) -> LRScheduler:
+    return cfg.scheduler.build(optimizer, cfg.steps) if cfg.scheduler is not None else None
 
 def make_optimizer_and_scheduler(
     cfg: TrainPipelineConfig, policy: PreTrainedPolicy
