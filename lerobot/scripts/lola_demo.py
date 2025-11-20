@@ -197,7 +197,7 @@ def main(cfg: TrainPipelineConfig):
     
     obs_seq_len = 3
     path_2_load = "/data_16T/deepseek/qwen_flow/161/step10000.pt"
-    cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
+    cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
     device = "cuda:0"
     
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
@@ -230,6 +230,7 @@ def main(cfg: TrainPipelineConfig):
     
     if path_2_load:
         model_state_dict = torch.load(path_2_load, map_location="cpu")
+        model_state_dict = model_state_dict['module']
         key_to_remove = []
         for k, v in model_state_dict.items():
             if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
