@@ -276,7 +276,6 @@ def train(cfg: TrainPipelineConfig):
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
         
-        fwd_bwd_start = time.perf_counter()
         loss, grad_norm, outputs = update_policy(model_engine, batch, logger)
         
         grad_to_record = grad_norm.item() if grad_norm is not None else 0.0
@@ -325,13 +324,14 @@ def train(cfg: TrainPipelineConfig):
                                         tag=f"step_{global_step}",
                                         client_state=client_state)
         
-        if is_log_step and rank == 0:
-            logger.info(train_tracker)
-            if wandb_logger:
-                wandb_log_dict = train_tracker.to_dict()
-                if outputs:
-                    wandb_log_dict.update(outputs)
-                wandb_logger.log_dict(wandb_log_dict, step)
+        if is_log_step:
+            if rank == 0:
+                logger.info(train_tracker)
+                if wandb_logger:
+                    wandb_log_dict = train_tracker.to_dict()
+                    if outputs:
+                        wandb_log_dict.update(outputs)
+                    wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
         
         if step_idx % dist_step == 0:
