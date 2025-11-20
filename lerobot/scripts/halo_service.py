@@ -531,8 +531,8 @@ def modelbench():
 @parser.wrap()
 def start_service(cfg: TrainPipelineConfig):
     
-    path_2_load = "/data_16T/deepseek/halo/cup_pp/step8000.pt"
-    cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
+    path_2_load = "/data_16T/deepseek/lola_light/cup_pp/step_15000/mp_rank_00_model_states.pt"
+    cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
     device = "cuda:1"
     
     model_bench = False
@@ -576,6 +576,7 @@ def start_service(cfg: TrainPipelineConfig):
     
     if path_2_load:
         model_state_dict = torch.load(path_2_load, map_location="cpu")
+        model_state_dict = model_state_dict['module']
         key_to_remove = []
         for k, v in model_state_dict.items():
             if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
@@ -654,7 +655,10 @@ def start_service(cfg: TrainPipelineConfig):
 if __name__ == '__main__':
     device, halo, processor, state_mean, state_std, action_mean, action_std, dataset = start_service()
     image_pool = {}
-    benchloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=extra_collate_fn, num_workers=2)
+    benchloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=extra_collate_fn, num_workers=0)
     loader_cycler = cycle(benchloader)
+    
+    batch = next(loader_cycler)
+    print(batch['observation.state'])
     
     app.run(host='0.0.0.0', port=7777)

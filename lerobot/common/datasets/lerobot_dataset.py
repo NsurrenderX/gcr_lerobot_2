@@ -1962,7 +1962,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         2. 保留了核心的策略路由逻辑。
         """
         
-        dataset_type = "bi" if "american_data" in item['dataset_name'] else "mono"
+        dataset_type = "bi" if "aloha_bb" in item['dataset_name'] else "mono"
+        item["dataset_type"] = dataset_type
+        print("dataset_type: ", item["dataset_type"])
         
         if self.policy == "xvla":
             dim_act = 20
@@ -2293,7 +2295,8 @@ class MultiSameDataset(torch.utils.data.Dataset):
         2. 保留了核心的策略路由逻辑。
         """
         
-        dataset_type = "bi" if "american_data" in item['dataset_name'] else "mono"
+        dataset_type = "bi" if "aloha_bb" in item['dataset_name'] else "mono"
+        item["dataset_type"] = dataset_type
         
         if self.policy == "xvla":
             dim_act = 20
