@@ -3,7 +3,7 @@ python lerobot/scripts/halo_service.py \
     --dataset.repo_id="whatever" \
     --dataset.processor='/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/' \
     --dataset.parent_dir="/data_16T/lerobot_openx/" \
-    --data_mix="aloha_bb_p"
+    --data_mix="cup_plus_aug"
     # --uni_res=true \
     # --uni_obs_tensor=true
     

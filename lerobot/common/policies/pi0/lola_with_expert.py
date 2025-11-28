@@ -496,17 +496,73 @@ class KvLearnableMask(nn.Module):
         
         return k, v
         
+class KeyRepresentation(nn.Module):
+    def __init__(self, hidden=128, in_head=[6, 4], out_head=2, expansion_ratio = 4):
+        super().__init__()
+        self.state_proj = nn.Linear(hidden*in_head[0], hidden*in_head[0]*in_head[1])
+        self.key_proj = nn.Linear(hidden*in_head[1], hidden*in_head[1]*in_head[0])
+        # self.key_norm = Qwen2RMSNorm(hidden*in_head[1]*in_head[0])
         
+        self.latent_expansion = nn.Linear(hidden*in_head[0]*in_head[1], hidden*in_head[0]*in_head[1]*expansion_ratio)
+        self.latent_compression = nn.Linear(hidden*in_head[0]*in_head[1]*expansion_ratio, hidden*in_head[0]*in_head[1])
+        self.latent_norm = Qwen2RMSNorm(hidden*in_head[0]*in_head[1])
+        self.latent_activate = nn.SiLU()
         
+        self.latent_to_tgtdim = nn.Linear(hidden*in_head[0]*in_head[1], hidden*out_head)
+        self.tgt_walk = nn.Linear(hidden*out_head, hidden*out_head)
+        self.tgt_activate = nn.SiLU()
+        self.tgt_norm = Qwen2RMSNorm(hidden*out_head)
+        self.tgt_proj = nn.Linear(hidden*out_head, hidden*out_head)
+        
+        self.in_head = in_head
+        self.out_head = out_head
+    
+    def forward(self, state, key):
+        # state -> (batch_size, seq_len, head0, head_dim)
+        # key -> (batch_size, seq_len, head1, head_dim)
+
+        batch, seq_len, _, __ = key.shape
+        state = state.reshape(batch, seq_len, self.in_head[0]*state.shape[-1])
+        key = key.reshape(batch, seq_len, self.in_head[1]*key.shape[-1])
+
+        state = self.state_proj(state)
+        key = self.key_proj(key)
+        
+        gate_state = torch.sigmoid(state)
+        key = key * gate_state 
+        
+        key = self.latent_expansion(key)
+        key = self.latent_activate(key)
+        key = self.latent_compression(key)
+        key = self.latent_norm(key)
+        
+        key = self.latent_to_tgtdim(key)
+        key = self.tgt_walk(key)
+        key = self.tgt_activate(key)
+        key = self.tgt_norm(key)
+        key = self.tgt_proj(key)
+        
+        return key
     
 class KvRepresentation(nn.Module):
-    def __init__(self, hidden=128, in_head=[6, 4], out_head=2):
+    def __init__(self, hidden=128, in_head=[6, 4], out_head=2, expansion_ratio = 4):
         super().__init__()
         # self.linear = nn.Linear(hidden*in_head, hidden*in_head)
         # self.norm = Qwen2RMSNorm(hidden*in_head)
         # self.activate_1 = nn.SiLU()
         # self.linear1 = nn.Linear(hidden*in_head[0]*in_head[1], hidden*in_head[0]*in_head[1])
         # self.norm_1 = Qwen2RMSNorm(hidden*in_head[0]*in_head[1])
+        
+        self.latent_expansion = nn.ModuleList([nn.linear(hidden, int(expansion_ratio*hidden)) for _ in range(in_head[0]*in_head[1])])
+        self.latent_compression = nn.ModuleList([nn.linear(int(expansion_ratio*hidden), hidden) for _ in range(in_head[0]*in_head[1])])
+        self.latent_norm = Qwen2RMSNorm(hidden*in_head[0]*in_head[1])
+        self.latent_activate = nn.SiLU()
+        
+        self.latent_to_tgtdim = nn.Linear(hidden*in_head[0]*in_head[1], hidden*out_head)
+        self.tgt_walk = nn.ModuleList([nn.linear(hidden, hidden) for _ in range(out_head)])
+        self.tgt_activate = nn.SiLU()
+        self.tgt_norm = Qwen2RMSNorm(hidden*out_head)
+        self.tgt_proj = nn.Linear(hidden*out_head, hidden*out_head)
         
         self.linear_1 = nn.Linear(hidden*in_head[0]*in_head[1], hidden*in_head[1])
         self.norm_1 = Qwen2RMSNorm(hidden*in_head[1])
@@ -520,42 +576,29 @@ class KvRepresentation(nn.Module):
         self.in_head = in_head
         self.out_head = out_head
         
-    def forward(self, x, x_ori):
+    def forward(self, x):
         # x -> (batch_size, seq_len, head1*head2, head_dim)
         norm_dtype = self.norm_1.weight.dtype
         x_dtype = x.dtype
         
-        x = x.reshape(x.shape[0], -1, x.shape[2]*x.shape[3]) # -> (batch_size, seq_len, head1*head2*head_dim)
-        x_ori = x_ori.reshape(x_ori.shape[0], -1, x_ori.shape[2]*x_ori.shape[3]) # -> (batch_size, seq_len, head1*head2*head_dim)
-        x = self.linear_1(x) # -> (batch_size, seq_len, head2*head_dim)
-        x = x.to(norm_dtype)
-        x = self.norm_1(x)
-        x = x.to(x_dtype)
-        x = x + x_ori
-        x = x.to(norm_dtype)
-        x = self.norm_2(x)
-        x = x.to(x_dtype)
+        _, __, total_heads, ___ = x.shape
         
-        # y = x.clone()
-        # x = self.linear1(x) # -> [B, len, 128, 128]
-        # x = self.norm_1(x)
-        # x = self.activate_1(x)
-        # x = x + y
+        assert total_heads == self.in_head[0]*self.in_head[1], f"The number of heads is not correct, expected {self.in_head[0]*self.in_head[1]}, got {total_heads}"
+
+        for i in range(self.in_head[0]*self.in_head[1]):
+            x[:, :, i, :] = self.latent_expansion[i](x[:, :, i, :])
+        x = self.latent_activate(x)
+        for i in range(self.in_head[0]*self.in_head[1]):
+            x[:, :, i, :] = self.latent_compression[i](x[:, :, i, :])
+        x = self.latent_norm(x)
         
-        x = self.compress_to_tgtdim(x) # -> (batch_size, seq_len, out_head*head_dim)
-        # x = x.transpose(-1, -2) # -> [B, len, 2, 128]
+        x = self.latent_to_tgtdim(x)
         
-        y = x.clone()
-        
-        x = x.to(norm_dtype)
-        x = self.norm_3(x)
-        x = x.to(x_dtype)
-        x = self.activate_3(x)
-        x = self.linear_2(x) # -> (batch_size, seq_len, head2*head_dim)
-        
-        x = x + y
-        
-        x = x.view(x.shape[0], x.shape[1], self.out_head, -1) # -> (batch_size, seq_len, head_dim, out_head)
+        for i in range(self.out_head):
+            x[:, :, i, :] = self.tgt_walk[i](x[:, :, i, :])
+        x = self.tgt_activate(x)
+        x = self.tgt_proj(x)
+        x = self.tgt_norm(x)
         
         return x
         
