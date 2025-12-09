@@ -25,6 +25,9 @@ from lerobot.common.datasets.transforms import ImageTransforms
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.datasets.lerobot_dataset import MultiDatasetforDistTraining, extra_collate_fn
 
+OBS_SEQ_LEN = 3
+action_mean, action_std, state_mean, state_std, device = None, None, None, None, None
+
 def prepare_images(item: dict):
     vision = {
         "image": [],
@@ -192,12 +195,12 @@ def prepare_input(item, processor, device):
                     device_list = [v[i].to(device) for i in range(len(v))]
                     data_dict[k] = device_list
     return data_dict
-@parser.wrap()
-def main(cfg: TrainPipelineConfig):
-    
-    obs_seq_len = 3
+
+def load_lola_model(cfg: TrainPipelineConfig):
+    global action_mean, action_std, state_mean, state_std, device, processor
     path_2_load = "/data_16T/deepseek/lola_light/cup_pp/step_10000/mp_rank_00_model_states.pt"
-    cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+    # This is now set via the command line:
+    #cfg.policy.qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
     device = "cuda:0"
     
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
@@ -227,9 +230,11 @@ def main(cfg: TrainPipelineConfig):
         ds_meta=dataset.meta,
         weight_pt_path=cfg.policy.pretrained_path
     )
+    print("POLICY CONSTRUCTED SUCCESSFULLY!")
     
     if path_2_load:
         model_state_dict = torch.load(path_2_load, map_location="cpu")
+        # TODO: Remove the line below when using Qwen-7B
         model_state_dict = model_state_dict['module']
         key_to_remove = []
         for k, v in model_state_dict.items():
@@ -249,36 +254,43 @@ def main(cfg: TrainPipelineConfig):
     lola.eval()
 
     lola.to(device=device)
-    
-    sim_image = np.random.randint(0, 256, size=(224, 224, 3), dtype=np.uint8)
-    sim_image = Image.fromarray(sim_image)
-    
-    simulation_data = {
-        "observation.state": torch.ones(32).to(dtype=torch.float32),
-        "mean": state_mean,
-        "std": state_std,
-        "task": "Pick up the apple.",
-    }
-    
-    simulation_data['primary'] = [sim_image for _ in range(obs_seq_len)]
-    simulation_data['secondary'] = sim_image
-    simulation_data['wrist'] = sim_image
-    
-    input = prepare_input(simulation_data, processor, device)
-    input["action.mean"] = action_mean
-    input["action.std"] = action_std
-    actions = lola.infer(input).tolist()
+    return lola
+
+
+def generate_actions(lola, raw_obs):
+    global action_mean, action_std, state_mean, state_std, device, processor
+    raw_obs["mean"] = state_mean
+    raw_obs["std"] = state_std
+    input_ = prepare_input(raw_obs, processor, device)
+    input_["action.mean"] = action_mean
+    input_["action.std"] = action_std
+    actions = lola.infer(input_).tolist()
     
     actions = np.array([row[:14] for row in actions[0]])
     GRIPPER_IDX = [6, 13]
     actions[:, GRIPPER_IDX] = 1 / (1 + np.exp(-actions[:, GRIPPER_IDX]))
-    
-    print(actions.shape)
-    response_dict = {
-        "act": actions
+    return actions
+
+
+@parser.wrap()
+def test(cfg: TrainPipelineConfig):
+    print("SIMULATED TEST")
+    lola = load_lola_model(cfg)
+    sim_image = np.random.randint(0, 256, size=(224, 224, 3), dtype=np.uint8)
+    sim_image = Image.fromarray(sim_image)
+
+    simulation_data = {
+        "observation.state": torch.ones(32).to(dtype=torch.float32),
+        "task": "Pick up the apple.",
     }
     
-    return response_dict
+    simulation_data['primary'] = [sim_image for _ in range(OBS_SEQ_LEN)]
+    simulation_data['secondary'] = sim_image
+    simulation_data['wrist'] = sim_image
+
+    actions = generate_actions(simulation_data)
+    return actions
+
 
 if __name__ == "__main__":
-    main()
+    test()

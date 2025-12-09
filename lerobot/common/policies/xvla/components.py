@@ -19,6 +19,7 @@ DATA_DOMAIN_ID = {
     "widowx-air": 4,
     "AIR-AGILEX-HQ": 5,
     "robotwin2_abs_ee": 6,
+    # IS THIS RIGHT? Two data domains having the same id
     "robotwin2_clean": 6,
     "robocasa-human": 7,
     "VLABench": 8,
@@ -34,6 +35,7 @@ DATA_DOMAIN_ID = {
     "cup_pp_10": 24,
     "cup_pp_20": 25,
     "cup_pp_50": 26,
+    "aloha_bb_p": 27,
         
     # pretraining
     "robomind-franka": 11,
