@@ -140,3 +140,41 @@ class XarmEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+@EnvConfig.register_subclass("msra-ee")
+@dataclass
+class MsraEEEnv(EnvConfig):
+    """MSRA mobile_aloha dataset in end-effector space.
+    Differs from MsraJointEnv only in which state/action raw keys are surfaced
+    as the canonical robot state & action.
+    """
+
+    task: str = "MsraEE-v0"
+    fps: int = 40
+    episode_length: int = 600  # placeholder; adjust if a canonical length is known
+    render_mode: str = "rgb_array"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action.ee_position": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+            "observations.ee_position": PolicyFeature(type=FeatureType.STATE, shape=(16,)),
+            "observations.images.cam_high": PolicyFeature(type=FeatureType.VISUAL, shape=(480, 848, 3)),
+            "observations.images.cam_left_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(480, 848, 3)),
+            "observations.images.cam_right_wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(480, 848, 3)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action.ee_position": ACTION,
+            "observations.ee_position": OBS_ROBOT,
+            "observations.images.cam_high": f"{OBS_IMAGES}.cam_high",
+            "observations.images.cam_left_wrist": f"{OBS_IMAGES}.cam_left_wrist",
+            "observations.images.cam_right_wrist": f"{OBS_IMAGES}.cam_right_wrist",
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "render_mode": self.render_mode,
+            "max_episode_steps": self.episode_length,
+        }
